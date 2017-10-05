@@ -65,37 +65,45 @@ class TweetDownThread(TweetThread):
             tweetid = self.id_queue.get()
             try:
                 status = self.api.get_status(tweetid)
-            except Exception as e:
+                text   = non_text_re.sub('', status.text)
+                if len(text) < 10:
+                    print "IGN:", text
+                    continue
+                else:
+                    status_data = dict(
+                        id   = status.id,
+                        date = status.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                        text = text,
+                        favourites_count = status.user.favourites_count,
+                        statuses_count = status.user.statuses_count,
+                        verified = status.user.verified,
+                        following = status.user.following,
+                        listed_count = status.user.listed_count,
+                        followers_count = status.user.followers_count,
+                        retweet_count = status.retweet_count
+                    )
+                    self.cnt_queue.put(status_data)
+                    print status_data
+            except tweepy.TweepError as e:
                 print(e)
                 traceback.print_exc()
+                if 'NewConnectionError' in e.message:
+                    self.pause_evt.set()
+                    print "!CONNECTION ERROR!"
+            finally:            
                 self.tkn_queue.put(True)
-                continue
-            text   = non_text_re.sub('', status.text)
-            if len(text) < 10:
-                print "IGN:", text
+                if self.pause_evt.is_set():
+                    print "PAUSED for %d s" % self.pause_time
+                    time.sleep(self.pause_time)
+                    self.pause_evt.reset()
+                else:
+                    time.sleep(self.delay)
                 self.tkn_queue.put(True)
-                continue
-            else:
-                status_data = dict(
-                    id   = status.id,
-                    date = status.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-                    text = text,
-                    favourites_count = status.user.favourites_count,
-                    statuses_count = status.user.statuses_count,
-                    verified = status.user.verified,
-                    following = status.user.following,
-                    listed_count = status.user.listed_count,
-                    followers_count = status.user.followers_count,
-                    retweet_count = status.retweet_count
-                )
-                self.cnt_queue.put(status_data)
-                print status_data
-            time.sleep(self.delay)
-            self.tkn_queue.put(True)
 
 
 def retrieve_tweets(input_file, output_file, pool_size, accounts):
-    DELAY = 1.6
+    DELAY_TIME = 1.0
+    PAUSE_TIME = 10.0
 
     stop_flag = False
 
@@ -107,12 +115,12 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts):
     pause_evt= Event()
     threads  = [TweetDownThread(
                     accounts[i%len(accounts)],
-                    DELAY,
+                    DELAY_TIME,
                     pause_evt,
                     PAUSE_TIME,
-                    id_queue, 
-                    cnt_queue, 
-                    tkn_queue, 
+                    id_queue,
+                    cnt_queue,
+                    tkn_queue,
                     stop_evt
                     ) for i in xrange(pool_size)]
     save_thread = TweetSaveThread(output_file, id_queue, cnt_queue, tkn_queue, stop_evt)
@@ -120,7 +128,7 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts):
     save_thread.start()
     for t in threads: 
         t.start()
-        time.sleep(DELAY / pool_size)
+        time.sleep(DELAY_TIME / pool_size)
     for _ in xrange(pool_size): 
         tkn_queue.put(True)
     
@@ -164,6 +172,6 @@ if __name__ == "__main__":
         if not retrieve_tweets(
             f, 
             'llt/Data2/%s' % os.path.basename(f),
-            8,
+            5,
             [(consumer_key, consumer_secret, access_token, access_secret)]
         ): break
