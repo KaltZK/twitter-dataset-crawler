@@ -28,11 +28,12 @@ access_secret = 'm40tSzeAoRt5qecaa1u31ij1hYIGkyWxljxGMfRmni2lW'
 db = UnQLite('llt/tmp/db.unqlite')
 
 class TweetThread(Thread):
-    def __init__(self, id_queue, cnt_queue, tkn_queue, stop_evt):
+    def __init__(self, id_queue, cnt_queue, tkn_queue, rec_queue, stop_evt):
         super(TweetThread, self).__init__()
         self.id_queue = id_queue
         self.cnt_queue = cnt_queue
         self.tkn_queue = tkn_queue
+        self.rec_queue = rec_queue
         self.stop_evt = stop_evt
         self.setDaemon(True)
 
@@ -50,6 +51,10 @@ class TweetSaveThread(TweetThread):
         print "SAVING STOPPED."
 
 class TweetDownThread(TweetThread):
+    NETWORK_ERROR_KEYWORDS = [
+        'bad handshake',
+        'NewConnectionError'
+    ]
     def __init__(self, api_info, delay, pause_evt, pause_time, *args):
         super(TweetDownThread, self).__init__(*args)
         self.delay = delay
@@ -92,9 +97,10 @@ class TweetDownThread(TweetThread):
             except tweepy.TweepError as e:
                 print(e)
                 traceback.print_exc()
-                if 'NewConnectionError' in e.message:
+                if any( em in e.message for em in self.NETWORK_ERROR_KEYWORDS ):
                     self.pause_evt.set()
-                    print "!CONNECTION ERROR!"
+                    print "!!CONNECTION ERROR!!"
+                    self.rec_queue.put(tweetid)
                     time.sleep(self.pause_time)
                     self.pause_evt.clear()
             finally:            
@@ -114,6 +120,7 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts):
     id_queue = Queue()
     cnt_queue= Queue()
     tkn_queue= Queue()
+    rec_queue= Queue()
     stop_evt = Event()
     pause_evt= Event()
     threads  = [TweetDownThread(
@@ -124,9 +131,10 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts):
                     id_queue,
                     cnt_queue,
                     tkn_queue,
+                    rec_queue,
                     stop_evt
                     ) for i in xrange(pool_size)]
-    save_thread = TweetSaveThread(output_file, id_queue, cnt_queue, tkn_queue, stop_evt)
+    save_thread = TweetSaveThread(output_file, id_queue, cnt_queue, tkn_queue, rec_queue, stop_evt)
     
     save_thread.start()
     for t in threads: 
@@ -137,10 +145,10 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts):
     
     print "Threads Ready."
     
+    pn = 0
     if db.exists(input_file):
       pn = int(db[input_file])
     else:
-      pn = 0
       db[input_file] = 0
       db.commit()
     
@@ -148,14 +156,22 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts):
 
     df = pd.read_csv(input_file)
     print "Index Loaded."
+    
+    def _tweet(tweetid, p):
+        print "\nTOKEN! %d\n"%pn
+        id_queue.put(tweetid)
+        db[input_file] = p + 1
+        return p + 1
 
     try:
         for tweetid in df.iloc[pn:, 0]:
             tkn_queue.get()
-            print "\nTOKEN! %d\n"%pn
-            id_queue.put(tweetid)
-            pn += 1
-            db[input_file] = pn
+            while not rec_queue.empty():
+                rtid = rec_queue.get()
+                print "Recover:", tweetid
+                pn = _tweet(rtid, pn)
+                tkn_queue.get()
+            pn = _tweet(tweetid, pn)
             if not all(t.isAlive() for t in threads):
                 raise Exception("Threads are dead.")
         print "Finished."
