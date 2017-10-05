@@ -65,15 +65,15 @@ class TweetDownThread(TweetThread):
             tweetid = self.id_queue.get()
             try:
                 status = self.api.get_status(tweetid)
-                text   = non_text_re.sub('', status.text)
-                if len(text) < 10:
+                text = status.text.strip()
+                if len(non_text_re.sub('', text)) < 10:
                     print "IGN:", text
                     continue
                 else:
                     status_data = dict(
                         id   = status.id,
                         date = status.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-                        text = status.text.decode('utf-8').strip(),
+                        text = text,
                         favourites_count = status.user.favourites_count,
                         statuses_count = status.user.statuses_count,
                         verified = status.user.verified,
