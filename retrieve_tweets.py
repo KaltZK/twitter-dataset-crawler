@@ -14,6 +14,12 @@ from unqlite import UnQLite
 import tweepy
 import pandas as pd
 
+
+DELAY_TIME = 1.0
+PAUSE_TIME = 10.0
+THREAD_NUM = 5
+
+
 consumer_key = 'boQ6Sgzco6Rv0ucn1UZTOp1XV'
 consumer_secret = 'jhTWNIMK0xHsmw6wQcKpdwpMSLXMTjXihFpDAV9s66xmHKiCpH'
 access_token = '915645899065352193-5Sp2F701ITRSC1F42d5hXnGatWca5WO'
@@ -68,7 +74,6 @@ class TweetDownThread(TweetThread):
                 text = status.text.strip()
                 if len(non_text_re.sub('', text)) < 10:
                     print "IGN:", text
-                    continue
                 else:
                     status_data = dict(
                         id   = status.id,
@@ -103,9 +108,6 @@ class TweetDownThread(TweetThread):
 
 
 def retrieve_tweets(input_file, output_file, pool_size, accounts):
-    DELAY_TIME = 1.0
-    PAUSE_TIME = 10.0
-
     stop_flag = False
 
     print "On Dataset:", input_file
@@ -173,7 +175,7 @@ if __name__ == "__main__":
         if not retrieve_tweets(
             f, 
             'llt/Data2/%s' % os.path.basename(f),
-            5,
+            THREAD_NUM,
             [
                 (consumer_key, consumer_secret, access_token, access_secret)
             ]
