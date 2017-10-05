@@ -73,7 +73,7 @@ class TweetDownThread(TweetThread):
                     status_data = dict(
                         id   = status.id,
                         date = status.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-                        text = text,
+                        text = status.text.decode('utf-8').strip(),
                         favourites_count = status.user.favourites_count,
                         statuses_count = status.user.statuses_count,
                         verified = status.user.verified,
@@ -90,12 +90,13 @@ class TweetDownThread(TweetThread):
                 if 'NewConnectionError' in e.message:
                     self.pause_evt.set()
                     print "!CONNECTION ERROR!"
+                    time.sleep(self.pause_time)
+                    self.pause_evt.clear()
             finally:            
                 self.tkn_queue.put(True)
                 if self.pause_evt.is_set():
                     print "PAUSED for %d s" % self.pause_time
                     time.sleep(self.pause_time)
-                    self.pause_evt.reset()
                 else:
                     time.sleep(self.delay)
                 self.tkn_queue.put(True)
@@ -173,5 +174,7 @@ if __name__ == "__main__":
             f, 
             'llt/Data2/%s' % os.path.basename(f),
             5,
-            [(consumer_key, consumer_secret, access_token, access_secret)]
+            [
+                (consumer_key, consumer_secret, access_token, access_secret)
+            ]
         ): break
