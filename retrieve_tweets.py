@@ -15,15 +15,13 @@ import tweepy
 import pandas as pd
 
 
-DELAY_TIME = 1.0
-PAUSE_TIME = 10.0
-THREAD_NUM = 5
+THREAD_NUM = 16
+DELAY_TIME = 0.2
+PAUSE_TIME = 15.0
+MAX_RECOVER_TIMES = 40
 
+GLOBAL_PAUSE = False
 
-consumer_key = 'boQ6Sgzco6Rv0ucn1UZTOp1XV'
-consumer_secret = 'jhTWNIMK0xHsmw6wQcKpdwpMSLXMTjXihFpDAV9s66xmHKiCpH'
-access_token = '915645899065352193-5Sp2F701ITRSC1F42d5hXnGatWca5WO'
-access_secret = 'm40tSzeAoRt5qecaa1u31ij1hYIGkyWxljxGMfRmni2lW'
 
 db = UnQLite('llt/tmp/db.unqlite')
 
@@ -53,9 +51,10 @@ class TweetSaveThread(TweetThread):
 class TweetDownThread(TweetThread):
     NETWORK_ERROR_KEYWORDS = [
         'bad handshake',
-        'NewConnectionError'
+        'NewConnectionError',
+        'ProxyError'
     ]
-    def __init__(self, api_info, delay, pause_evt, pause_time, *args):
+    def __init__(self, api_info, proxy, delay, pause_evt, pause_time, *args):
         super(TweetDownThread, self).__init__(*args)
         self.delay = delay
         self.pause_evt = pause_evt
@@ -69,11 +68,12 @@ class TweetDownThread(TweetThread):
                 wait_on_rate_limit_notify=True, 
                 retry_count=5, 
                 retry_delay=5,
+                proxy = proxy,
                 retry_errors=set([401, 404, 500, 503]))
     def run(self):
         non_text_re = re.compile(r'RT @.+?:|.?@\S+|https?://[^/]+?/.+|#\S+|^\s+|\s$|\n+')
         while not self.stop_evt.is_set():
-            tweetid = self.id_queue.get()
+            tweetid, idx, rec_t = self.id_queue.get()
             try:
                 status = self.api.get_status(tweetid)
                 text = status.text.strip()
@@ -100,20 +100,21 @@ class TweetDownThread(TweetThread):
                 if any( em in e.message for em in self.NETWORK_ERROR_KEYWORDS ):
                     self.pause_evt.set()
                     print "!!CONNECTION ERROR!!"
-                    self.rec_queue.put(tweetid)
+                    self.rec_queue.put((tweetid, idx, rec_t+1))
                     time.sleep(self.pause_time)
                     self.pause_evt.clear()
             finally:            
                 self.tkn_queue.put(True)
-                if self.pause_evt.is_set():
+                if GLOBAL_PAUSE and self.pause_evt.is_set():
                     print "PAUSED for %d s" % self.pause_time
                     time.sleep(self.pause_time)
                 else:
-                    time.sleep(self.delay)
+                    pass
+                    # time.sleep(self.delay)
                 self.tkn_queue.put(True)
 
 
-def retrieve_tweets(input_file, output_file, pool_size, accounts):
+def retrieve_tweets(input_file, output_file, pool_size, accounts, proxies):
     stop_flag = False
 
     print "On Dataset:", input_file
@@ -125,6 +126,7 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts):
     pause_evt= Event()
     threads  = [TweetDownThread(
                     accounts[i%len(accounts)],
+                    proxies[i%len(proxies)],
                     DELAY_TIME,
                     pause_evt,
                     PAUSE_TIME,
@@ -157,23 +159,27 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts):
     df = pd.read_csv(input_file)
     print "Index Loaded."
     
-    def _tweet(tweetid, p):
-        print "\nTOKEN! %d\n"%pn
-        id_queue.put(tweetid)
-        db[input_file] = p + 1
-        return p + 1
+    def _tweet(tweetid, p, rec_t = 0):
+        id_queue.put( (tweetid, p, rec_t) )
 
     try:
         for tweetid in df.iloc[pn:, 0]:
             tkn_queue.get()
             while not rec_queue.empty():
-                rtid = rec_queue.get()
-                print "Recover:", tweetid
-                pn = _tweet(rtid, pn)
-                tkn_queue.get()
-            pn = _tweet(tweetid, pn)
+                rtid, idx, rec_t = rec_queue.get()
+                if rec_t == MAX_RECOVER_TIMES:
+                    print "Recovering Gave Up:", tweetid
+                else:
+                    print "Recover:", tweetid, "(",rec_t , ")"
+                    _tweet(rtid, idx, rec_t)
+                    tkn_queue.get()
+            print "\nTOKEN! %d\n"%pn
+            _tweet(tweetid, pn)
+            pn += 1
+            db[input_file] = pn
             if not all(t.isAlive() for t in threads):
                 raise Exception("Threads are dead.")
+            time.sleep(DELAY_TIME)
         print "Finished."
     except KeyboardInterrupt, e:
         stop_evt.set()
@@ -185,14 +191,25 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts):
     return not stop_flag
 
 if __name__ == "__main__":
+    import random
     db.begin()
+    tokens = [
+        map(tk.__getitem__, (
+            'consumer_key', 
+            'consumer_secret', 
+            'access_token', 
+            'access_secret'
+        ))
+        for tk in json.load(open('config/tokens.json'))
+    ]
     for f in glob('llt/twitter-events-2012-2016/*.ids'):
         print f
         if not retrieve_tweets(
             f, 
             'llt/Data2/%s' % os.path.basename(f),
             THREAD_NUM,
-            [
-                (consumer_key, consumer_secret, access_token, access_secret)
-            ]
+            tokens,
+            # proxies = [None],
+            proxies = ['127.0.0.1:49999'],
+            # proxies = random.sample(open("config/proxies").read().split("\n"), THREAD_NUM)
         ): break
