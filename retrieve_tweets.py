@@ -17,7 +17,7 @@ import numpy as np
 
 
 THREAD_NUM = 16
-DELAY_TIME = 0.5
+DELAY_TIME = 0.25
 PAUSE_TIME = 15.0
 MAX_RECOVER_TIMES = 40
 TWEET_CHUNK_SIZE = 100
@@ -154,13 +154,12 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts, proxies):
 
     df = pd.read_csv(input_file)
     length, col_n = df.shape
-    chunks = np.array_split(df.iloc[pn:, 0], (length - pn) / TWEET_CHUNK_SIZE + 1)
-    print "Index Loaded."
-    print "Chunk Number:", len(chunks)
-
     if pn >= length:
         print "Everything up-to-date."
         return True
+    chunks = np.array_split(df.iloc[pn:, 0], (length - pn) / TWEET_CHUNK_SIZE + 1)
+    print "Chunk Number:", len(chunks)
+    print "Index Loaded."
 
     id_queue = Queue()
     cnt_queue= Queue()
