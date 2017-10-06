@@ -20,7 +20,7 @@ THREAD_NUM = 16
 DELAY_TIME = 0.5
 PAUSE_TIME = 15.0
 MAX_RECOVER_TIMES = 40
-TWEET_CHUNK_SIZE = 50
+TWEET_CHUNK_SIZE = 100
 
 GLOBAL_PAUSE = True
 
@@ -59,6 +59,9 @@ class TweetDownThread(TweetThread):
         'NewConnectionError',
         'ProxyError'
     ]
+    CRITICAL_TWITTER_ERROR_CODES = [
+        38
+    ] 
     def __init__(self, api_info, proxy, delay, pause_evt, pause_time, *args):
         super(TweetDownThread, self).__init__(*args)
         self.delay = delay
@@ -109,12 +112,18 @@ class TweetDownThread(TweetThread):
             except tweepy.TweepError as e:
                 print(e)
                 traceback.print_exc()
-                if any( em in e.message for em in self.NETWORK_ERROR_KEYWORDS ):
+                if isinstance(e.message, list):
+                    if any( er['code'] in self.CRITICAL_TWITTER_ERROR_CODES for er in e.message):
+                        print "==!!A CRITICAL ERROR HAPPENS.!!=="
+                        print "Everything Goes Black"
+                        break
+                elif any( em in e.message for em in self.NETWORK_ERROR_KEYWORDS ):
                     self.pause_evt.set()
                     print "!!CONNECTION ERROR!!"
                     self.rec_queue.put((tweetid_list, idx, rec_t+1))
                     time.sleep(self.pause_time)
                     self.pause_evt.clear()
+
             finally:            
                 self.tkn_queue.put(True)
                 if GLOBAL_PAUSE and self.pause_evt.is_set():
@@ -132,6 +141,26 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts, proxies):
     save_ct = 0
 
     print "On Dataset:", input_file
+
+    pn = 0
+    if db.exists(input_file):
+      pn = int(db[input_file])
+    else:
+      db[input_file] = 0
+      db.commit()
+    
+    print "From", pn
+
+    df = pd.read_csv(input_file)
+    length, col_n = df.shape
+    chunks = np.array_split(df.iloc[pn:, 0], (length - pn) / TWEET_CHUNK_SIZE + 1)
+    print "Index Loaded."
+    print "Chunk Number:", len(chunks)
+
+    if pn >= length:
+        print "Everything up-to-date."
+        return True
+
     id_queue = Queue()
     cnt_queue= Queue()
     tkn_queue= Queue()
@@ -161,18 +190,6 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts, proxies):
     
     print "Threads Ready."
     
-    pn = 0
-    if db.exists(input_file):
-      pn = int(db[input_file])
-    else:
-      db[input_file] = 0
-      db.commit()
-    
-    print "From", pn
-
-    df = pd.read_csv(input_file)
-    print "Index Loaded."
-    
     def _tweet(tweetid_list, p, rec_t = 0):
         id_queue.put( (tweetid_list, p, rec_t) )
         time.sleep(DELAY_TIME)
@@ -187,8 +204,6 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts, proxies):
                 _tweet(rtids, idx, rec_t)
 
     try:
-        length, col_n = df.shape
-        chunks = np.array_split(df.iloc[pn:, 0], length / TWEET_CHUNK_SIZE)
         for tweet_id_list in chunks:
             tkn_queue.get()
             _clear_rec_queue()
