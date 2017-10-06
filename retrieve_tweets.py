@@ -168,9 +168,9 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts, proxies):
             while not rec_queue.empty():
                 rtid, idx, rec_t = rec_queue.get()
                 if rec_t == MAX_RECOVER_TIMES:
-                    print "Recovering Gave Up:", tweetid
+                    print "Recovering Gave Up:", rtid
                 else:
-                    print "Recover:", tweetid, "(",rec_t , ")"
+                    print "Recover:", rtid, "(",rec_t , ")"
                     _tweet(rtid, idx, rec_t)
                     tkn_queue.get()
             print "\nTOKEN! %d\n"%pn
