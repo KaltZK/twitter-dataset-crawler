@@ -13,12 +13,14 @@ from Queue import Empty as QueueEmpty
 from unqlite import UnQLite
 import tweepy
 import pandas as pd
+import numpy as np
 
 
 THREAD_NUM = 16
-DELAY_TIME = 0.3
+DELAY_TIME = 0.5
 PAUSE_TIME = 15.0
 MAX_RECOVER_TIMES = 40
+TWEET_CHUNK_SIZE = 50
 
 GLOBAL_PAUSE = True
 
@@ -80,34 +82,37 @@ class TweetDownThread(TweetThread):
                 req = self.id_queue.get_nowait()
             except QueueEmpty, e:
                 continue
-            tweetid, idx, rec_t = req
+            tweetid_list, idx, rec_t = req
             try:
-                status = self.api.get_status(tweetid)
-                text = status.text.strip()
-                if len(non_text_re.sub('', text)) < 10:
-                    print "IGN:", text
-                else:
-                    status_data = dict(
-                        id   = status.id,
-                        date = status.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-                        text = text,
-                        favourites_count = status.user.favourites_count,
-                        statuses_count = status.user.statuses_count,
-                        verified = status.user.verified,
-                        following = status.user.following,
-                        listed_count = status.user.listed_count,
-                        followers_count = status.user.followers_count,
-                        retweet_count = status.retweet_count
-                    )
-                    self.cnt_queue.put(status_data)
-                    print status_data
+                statuses_list = self.api.statuses_lookup(tweetid_list)
+                print "\t^",
+                for status in statuses_list:
+                    text = status.text.strip()
+                    if len(non_text_re.sub('', text)) < 10:
+                        print "IGN:", text
+                    else:
+                        status_data = dict(
+                            id   = status.id,
+                            date = status.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                            text = text,
+                            favourites_count = status.user.favourites_count,
+                            statuses_count = status.user.statuses_count,
+                            verified = status.user.verified,
+                            following = status.user.following,
+                            listed_count = status.user.listed_count,
+                            followers_count = status.user.followers_count,
+                            retweet_count = status.retweet_count
+                        )
+                        self.cnt_queue.put(status_data)
+                        print '.',
+                print "$"
             except tweepy.TweepError as e:
                 print(e)
                 traceback.print_exc()
                 if any( em in e.message for em in self.NETWORK_ERROR_KEYWORDS ):
                     self.pause_evt.set()
                     print "!!CONNECTION ERROR!!"
-                    self.rec_queue.put((tweetid, idx, rec_t+1))
+                    self.rec_queue.put((tweetid_list, idx, rec_t+1))
                     time.sleep(self.pause_time)
                     self.pause_evt.clear()
             finally:            
@@ -123,6 +128,8 @@ class TweetDownThread(TweetThread):
 
 def retrieve_tweets(input_file, output_file, pool_size, accounts, proxies):
     stop_flag = False
+
+    save_ct = 0
 
     print "On Dataset:", input_file
     id_queue = Queue()
@@ -166,28 +173,31 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts, proxies):
     df = pd.read_csv(input_file)
     print "Index Loaded."
     
-    def _tweet(tweetid, p, rec_t = 0):
-        id_queue.put( (tweetid, p, rec_t) )
+    def _tweet(tweetid_list, p, rec_t = 0):
+        id_queue.put( (tweetid_list, p, rec_t) )
         time.sleep(DELAY_TIME)
     
     def _clear_rec_queue():
         while not rec_queue.empty():
-            rtid, idx, rec_t = rec_queue.get()
+            rtids, idx, rec_t = rec_queue.get()
             if rec_t == MAX_RECOVER_TIMES:
-                print "Task Gave Up (Recover Limit Reached):", rtid
+                print "Task Gave Up (Recover Limit Reached):", rtids
             else:
-                print "Recover:", rtid, "(",rec_t , ")"
-                _tweet(rtid, idx, rec_t)
+                print "Recover (", rec_t , "):", rtids
+                _tweet(rtids, idx, rec_t)
 
     try:
-        for tweetid in df.iloc[pn:, 0]:
+        length, col_n = df.shape
+        chunks = np.array_split(df.iloc[pn:, 0], length / TWEET_CHUNK_SIZE)
+        for tweet_id_list in chunks:
             tkn_queue.get()
             _clear_rec_queue()
-            print "\tTask Submitted =>", pn, "<="
-            _tweet(tweetid, pn)
-            pn += 1
+            print "Task Submitted =>", pn, '->', pn+TWEET_CHUNK_SIZE, "<="
+            _tweet(list(tweet_id_list), pn)
+            pn += TWEET_CHUNK_SIZE
             db[input_file] = pn
-            if pn % 100 == 0:
+            save_ct += 1
+            if save_ct % 50 == 0:
                 db.commit()
             if not all(t.isAlive() for t in threads):
                 raise Exception("Threads are dead.")
