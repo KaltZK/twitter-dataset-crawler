@@ -16,11 +16,11 @@ import pandas as pd
 
 
 THREAD_NUM = 16
-DELAY_TIME = 0.2
+DELAY_TIME = 0.3
 PAUSE_TIME = 15.0
 MAX_RECOVER_TIMES = 40
 
-GLOBAL_PAUSE = False
+GLOBAL_PAUSE = True
 
 
 db = UnQLite('llt/tmp/db.unqlite')
@@ -42,7 +42,10 @@ class TweetSaveThread(TweetThread):
     def run(self):
         f = open(self.filename, 'a')
         while not self.stop_evt.is_set():
-            status = self.cnt_queue.get()
+            try:
+                status = self.cnt_queue.get_nowait()
+            except QueueEmpty, e:
+                continue
             f.write(json.dumps(status))
             f.write("\n")
         f.close()
@@ -73,7 +76,11 @@ class TweetDownThread(TweetThread):
     def run(self):
         non_text_re = re.compile(r'RT @.+?:|.?@\S+|https?://[^/]+?/.+|#\S+|^\s+|\s$|\n+')
         while not self.stop_evt.is_set():
-            tweetid, idx, rec_t = self.id_queue.get()
+            try:
+                req = self.id_queue.get_nowait()
+            except QueueEmpty, e:
+                continue
+            tweetid, idx, rec_t = req
             try:
                 status = self.api.get_status(tweetid)
                 text = status.text.strip()
@@ -161,25 +168,29 @@ def retrieve_tweets(input_file, output_file, pool_size, accounts, proxies):
     
     def _tweet(tweetid, p, rec_t = 0):
         id_queue.put( (tweetid, p, rec_t) )
+        time.sleep(DELAY_TIME)
+    
+    def _clear_rec_queue():
+        while not rec_queue.empty():
+            rtid, idx, rec_t = rec_queue.get()
+            if rec_t == MAX_RECOVER_TIMES:
+                print "Task Gave Up (Recover Limit Reached):", rtid
+            else:
+                print "Recover:", rtid, "(",rec_t , ")"
+                _tweet(rtid, idx, rec_t)
 
     try:
         for tweetid in df.iloc[pn:, 0]:
             tkn_queue.get()
-            while not rec_queue.empty():
-                rtid, idx, rec_t = rec_queue.get()
-                if rec_t == MAX_RECOVER_TIMES:
-                    print "Recovering Gave Up:", rtid
-                else:
-                    print "Recover:", rtid, "(",rec_t , ")"
-                    _tweet(rtid, idx, rec_t)
-                    tkn_queue.get()
-            print "\nTOKEN! %d\n"%pn
+            _clear_rec_queue()
+            print "\tTask Submitted =>", pn, "<="
             _tweet(tweetid, pn)
             pn += 1
             db[input_file] = pn
+            if pn % 100 == 0:
+                db.commit()
             if not all(t.isAlive() for t in threads):
                 raise Exception("Threads are dead.")
-            time.sleep(DELAY_TIME)
         print "Finished."
     except KeyboardInterrupt, e:
         stop_evt.set()
@@ -210,6 +221,7 @@ if __name__ == "__main__":
             THREAD_NUM,
             tokens,
             # proxies = [None],
-            proxies = ['127.0.0.1:49999'],
+            # proxies = ['127.0.0.1:49999'],
+            proxies = ['127.0.0.1:12305'],
             # proxies = random.sample(open("config/proxies").read().split("\n"), THREAD_NUM)
         ): break
