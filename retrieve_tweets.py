@@ -57,7 +57,8 @@ class TweetDownThread(TweetThread):
     NETWORK_ERROR_KEYWORDS = [
         'bad handshake',
         'NewConnectionError',
-        'ProxyError'
+        'ProxyError',
+        'HTTPSConnectionPool'
     ]
     CRITICAL_TWITTER_ERROR_CODES = [
         38
