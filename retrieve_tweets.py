@@ -16,8 +16,8 @@ import pandas as pd
 import numpy as np
 
 
-THREAD_NUM = 16
-DELAY_TIME = 0.25
+THREAD_NUM = 30
+DELAY_TIME = 0.4
 PAUSE_TIME = 15.0
 MAX_RECOVER_TIMES = 40
 TWEET_CHUNK_SIZE = 100
