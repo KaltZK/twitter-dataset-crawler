@@ -16,7 +16,7 @@ import pandas as pd
 import numpy as np
 
 
-THREAD_NUM = 30
+THREAD_NUM = 20
 DELAY_TIME = 0.4
 PAUSE_TIME = 15.0
 MAX_RECOVER_TIMES = 40
@@ -58,7 +58,8 @@ class TweetDownThread(TweetThread):
         'bad handshake',
         'NewConnectionError',
         'ProxyError',
-        'HTTPSConnectionPool'
+        'HTTPSConnectionPool',
+        'Connection'
     ]
     CRITICAL_TWITTER_ERROR_CODES = [
         38
@@ -125,8 +126,7 @@ class TweetDownThread(TweetThread):
                     time.sleep(self.pause_time)
                     self.pause_evt.clear()
 
-            finally:            
-                self.tkn_queue.put(True)
+            finally:
                 if GLOBAL_PAUSE and self.pause_evt.is_set():
                     print "PAUSED for %d s" % self.pause_time
                     time.sleep(self.pause_time)
